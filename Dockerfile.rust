@@ -1,0 +1,67 @@
+# Multi-stage Dockerfile for MiroFish Rust backend + Vue.js frontend
+
+# Stage 1: Build Rust backend
+FROM rust:1.83-bookworm AS rust-builder
+
+WORKDIR /app
+
+# Copy Cargo workspace files first for dependency caching
+COPY Cargo.toml Cargo.lock* ./
+COPY crates/mirofish-core/Cargo.toml ./crates/mirofish-core/
+COPY crates/mirofish-server/Cargo.toml ./crates/mirofish-server/
+COPY crates/mirofish-proxy/Cargo.toml ./crates/mirofish-proxy/
+
+# Create dummy source files for dependency caching
+RUN mkdir -p crates/mirofish-core/src && echo "pub fn lib() {}" > crates/mirofish-core/src/lib.rs \
+    && mkdir -p crates/mirofish-server/src && echo "fn main() {}" > crates/mirofish-server/src/main.rs \
+    && mkdir -p crates/mirofish-proxy/src && echo "fn main() {}" > crates/mirofish-proxy/src/main.rs
+
+# Build dependencies only (cached layer)
+RUN cargo build --release 2>/dev/null || true
+
+# Remove dummy source files
+RUN rm -rf crates/mirofish-core/src crates/mirofish-server/src crates/mirofish-proxy/src
+
+# Copy actual source code
+COPY crates/ ./crates/
+
+# Build the actual binaries
+RUN cargo build --release
+
+# Stage 2: Build Vue.js frontend
+FROM node:20-bookworm-slim AS frontend-builder
+
+WORKDIR /app/frontend
+
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+COPY frontend/ ./
+RUN npm run build
+
+# Stage 3: Final runtime image
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy Rust binaries
+COPY --from=rust-builder /app/target/release/mirofish-server ./
+COPY --from=rust-builder /app/target/release/mirofish-proxy ./
+
+# Copy frontend build
+COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
+
+# Copy .env.example as reference
+COPY .env.example ./
+
+# Create upload directory
+RUN mkdir -p backend/uploads backend/logs
+
+EXPOSE 3000 5001 8082
+
+# Default: start the backend server
+CMD ["./mirofish-server"]

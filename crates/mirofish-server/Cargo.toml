@@ -1,0 +1,39 @@
+[package]
+name = "mirofish-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mirofish-core = { path = "../mirofish-core" }
+
+# Web framework
+axum = { version = "0.8", features = ["multipart", "json"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# UUID
+uuid = { version = "1", features = ["v4"] }
+
+# Config
+dotenvy = "0.15"
+
+# Date/time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Database (for reading simulation SQLite DBs)
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Error handling
+anyhow = "1"
