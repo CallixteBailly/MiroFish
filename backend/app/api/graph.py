@@ -12,6 +12,8 @@ from . import graph_bp
 from ..config import Config
 from ..services.ontology_generator import OntologyGenerator
 from ..services.graph_builder import GraphBuilderService
+from ..services.local_graph import LocalGraphService
+from ..services.local_graph_builder import LocalGraphBuilder
 from ..services.text_processor import TextProcessor
 from ..utils.file_parser import FileParser
 from ..utils.logger import get_logger
@@ -282,230 +284,134 @@ def build_graph():
     try:
         logger.info("=== Starting graph build ===")
 
-        # Check configuration
-        errors = []
-        if not Config.ZEP_API_KEY:
-            errors.append("ZEP_API_KEY not configured")
-        if errors:
-            logger.error(f"Configuration errors: {errors}")
-            return jsonify({
-                "success": False,
-                "error": "Configuration error: " + "; ".join(errors)
-            }), 500
+        graph_mode = Config.graph_mode()
 
-        # Parse request
+        # Parse request (common to all modes)
         data = request.get_json() or {}
         project_id = data.get('project_id')
-        logger.debug(f"Request parameters: project_id={project_id}")
-
         if not project_id:
-            return jsonify({
-                "success": False,
-                "error": "Please provide project_id"
-            }), 400
-
-        # Get project
+            return jsonify({"success": False, "error": "Please provide project_id"}), 400
         project = ProjectManager.get_project(project_id)
         if not project:
-            return jsonify({
-                "success": False,
-                "error": f"Project not found: {project_id}"
-            }), 404
+            return jsonify({"success": False, "error": f"Project not found: {project_id}"}), 404
 
-        # Check project status
-        force = data.get('force', False)  # Force rebuild
+        # ── NONE mode: no graph, skip immediately ──────────────────────────
+        if graph_mode == "none":
+            project.graph_id = "lite_mode"
+            project.status = ProjectStatus.GRAPH_COMPLETED
+            ProjectManager.save_project(project)
+            task_manager = TaskManager()
+            task_id = task_manager.create_task(f"Build graph (none): {project.name or project_id}")
+            task_manager.complete_task(task_id, result={"graph_id": "lite_mode"})
+            logger.info(f"NONE mode: graph build skipped, project={project_id}")
+            return jsonify({"success": True, "data": {"task_id": task_id, "project_id": project_id, "graph_id": "lite_mode"}})
+
+        # ── Check project state ────────────────────────────────────────────
+        force = data.get('force', False)
 
         if project.status == ProjectStatus.CREATED:
-            return jsonify({
-                "success": False,
-                "error": "Project ontology has not been generated yet, please call /ontology/generate first"
-            }), 400
+            return jsonify({"success": False, "error": "Ontology not generated yet, call /ontology/generate first"}), 400
 
         if project.status == ProjectStatus.GRAPH_BUILDING and not force:
-            return jsonify({
-                "success": False,
-                "error": "Graph is currently being built, please do not resubmit. To force a rebuild, add force: true",
-                "task_id": project.graph_build_task_id
-            }), 400
+            return jsonify({"success": False, "error": "Graph is already building. Add force:true to rebuild.", "task_id": project.graph_build_task_id}), 400
 
-        # If force rebuild, reset status
         if force and project.status in [ProjectStatus.GRAPH_BUILDING, ProjectStatus.FAILED, ProjectStatus.GRAPH_COMPLETED]:
             project.status = ProjectStatus.ONTOLOGY_GENERATED
             project.graph_id = None
             project.graph_build_task_id = None
             project.error = None
 
-        # Get configuration
         graph_name = data.get('graph_name', project.name or 'MiroFish Graph')
         chunk_size = data.get('chunk_size', project.chunk_size or Config.DEFAULT_CHUNK_SIZE)
         chunk_overlap = data.get('chunk_overlap', project.chunk_overlap or Config.DEFAULT_CHUNK_OVERLAP)
-
-        # Update project configuration
         project.chunk_size = chunk_size
         project.chunk_overlap = chunk_overlap
 
-        # Get extracted text
         text = ProjectManager.get_extracted_text(project_id)
         if not text:
-            return jsonify({
-                "success": False,
-                "error": "Extracted text content not found"
-            }), 400
-
-        # Get ontology
+            return jsonify({"success": False, "error": "Extracted text content not found"}), 400
         ontology = project.ontology
         if not ontology:
-            return jsonify({
-                "success": False,
-                "error": "Ontology definition not found"
-            }), 400
+            return jsonify({"success": False, "error": "Ontology definition not found"}), 400
 
-        # Create async task
         task_manager = TaskManager()
         task_id = task_manager.create_task(f"Build graph: {graph_name}")
-        logger.info(f"Created graph build task: task_id={task_id}, project_id={project_id}")
-
-        # Update project status
+        logger.info(f"Created graph build task: task_id={task_id}, project_id={project_id}, mode={graph_mode}")
         project.status = ProjectStatus.GRAPH_BUILDING
         project.graph_build_task_id = task_id
         ProjectManager.save_project(project)
 
-        # Start background task
-        def build_task():
-            build_logger = get_logger('mirofish.build')
-            try:
-                build_logger.info(f"[{task_id}] Starting graph build...")
-                task_manager.update_task(
-                    task_id,
-                    status=TaskStatus.PROCESSING,
-                    message="Initializing graph build service..."
-                )
+        # ── LOCAL mode: NetworkX + SQLite ─────────────────────────────────
+        if graph_mode == "local":
+            def build_local():
+                build_logger = get_logger('mirofish.build')
+                try:
+                    task_manager.update_task(task_id, status=TaskStatus.PROCESSING, message="Creating local graph...", progress=5)
+                    local_builder = LocalGraphBuilder()
+                    graph_id = local_builder.graph.create_graph(graph_name)
+                    project.graph_id = graph_id
+                    ProjectManager.save_project(project)
 
-                # Create graph build service
-                builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)
+                    def cb(current, total, msg):
+                        pct = 10 + int(current / max(total, 1) * 85)
+                        task_manager.update_task(task_id, message=msg, progress=pct)
 
-                # Split into chunks
-                task_manager.update_task(
-                    task_id,
-                    message="Splitting text into chunks...",
-                    progress=5
-                )
-                chunks = TextProcessor.split_text(
-                    text,
-                    chunk_size=chunk_size,
-                    overlap=chunk_overlap
-                )
-                total_chunks = len(chunks)
+                    local_builder.build(graph_id, text, ontology, chunk_size, chunk_overlap, progress_callback=cb)
+                    stats = local_builder.graph.get_statistics(graph_id)
+                    project.status = ProjectStatus.GRAPH_COMPLETED
+                    ProjectManager.save_project(project)
+                    build_logger.info(f"[{task_id}] Local graph built: {stats['node_count']} nodes, {stats['edge_count']} edges")
+                    task_manager.update_task(task_id, status=TaskStatus.COMPLETED,
+                        message=f"Graph built: {stats['node_count']} nodes, {stats['edge_count']} edges",
+                        progress=100, result={"graph_id": graph_id, **stats})
+                except Exception as e:
+                    build_logger.error(f"[{task_id}] Local graph build failed: {e}")
+                    project.status = ProjectStatus.FAILED
+                    project.error = str(e)
+                    ProjectManager.save_project(project)
+                    task_manager.update_task(task_id, status=TaskStatus.FAILED, message=f"Build failed: {e}", error=traceback.format_exc())
 
-                # Create graph
-                task_manager.update_task(
-                    task_id,
-                    message="Creating Zep graph...",
-                    progress=10
-                )
-                graph_id = builder.create_graph(name=graph_name)
+            threading.Thread(target=build_local, daemon=True).start()
 
-                # Update project's graph_id
-                project.graph_id = graph_id
-                ProjectManager.save_project(project)
+        # ── ZEP mode: Zep Cloud ────────────────────────────────────────────
+        else:
+            def build_task():
+                build_logger = get_logger('mirofish.build')
+                try:
+                    task_manager.update_task(task_id, status=TaskStatus.PROCESSING, message="Initializing graph build service...", progress=5)
+                    builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)
+                    chunks = TextProcessor.split_text(text, chunk_size=chunk_size, overlap=chunk_overlap)
+                    total_chunks = len(chunks)
+                    task_manager.update_task(task_id, message="Creating Zep graph...", progress=10)
+                    graph_id = builder.create_graph(name=graph_name)
+                    project.graph_id = graph_id
+                    ProjectManager.save_project(project)
+                    builder.set_ontology(graph_id, ontology)
 
-                # Set ontology
-                task_manager.update_task(
-                    task_id,
-                    message="Setting ontology definition...",
-                    progress=15
-                )
-                builder.set_ontology(graph_id, ontology)
+                    def add_cb(msg, ratio):
+                        task_manager.update_task(task_id, message=msg, progress=15 + int(ratio * 40))
 
-                # Add text (progress_callback signature is (msg, progress_ratio))
-                def add_progress_callback(msg, progress_ratio):
-                    progress = 15 + int(progress_ratio * 40)  # 15% - 55%
-                    task_manager.update_task(
-                        task_id,
-                        message=msg,
-                        progress=progress
-                    )
+                    episode_uuids = builder.add_text_batches(graph_id, chunks, batch_size=3, progress_callback=add_cb)
+                    task_manager.update_task(task_id, message="Waiting for Zep to process data...", progress=55)
 
-                task_manager.update_task(
-                    task_id,
-                    message=f"Starting to add {total_chunks} text chunks...",
-                    progress=15
-                )
+                    def wait_cb(msg, ratio):
+                        task_manager.update_task(task_id, message=msg, progress=55 + int(ratio * 35))
 
-                episode_uuids = builder.add_text_batches(
-                    graph_id,
-                    chunks,
-                    batch_size=3,
-                    progress_callback=add_progress_callback
-                )
+                    builder._wait_for_episodes(episode_uuids, wait_cb)
+                    graph_data = builder.get_graph_data(graph_id)
+                    project.status = ProjectStatus.GRAPH_COMPLETED
+                    ProjectManager.save_project(project)
+                    nc, ec = graph_data.get("node_count", 0), graph_data.get("edge_count", 0)
+                    task_manager.update_task(task_id, status=TaskStatus.COMPLETED, message="Graph build complete",
+                        progress=100, result={"project_id": project_id, "graph_id": graph_id, "node_count": nc, "edge_count": ec, "chunk_count": total_chunks})
+                except Exception as e:
+                    build_logger.error(f"[{task_id}] Graph build failed: {e}")
+                    project.status = ProjectStatus.FAILED
+                    project.error = str(e)
+                    ProjectManager.save_project(project)
+                    task_manager.update_task(task_id, status=TaskStatus.FAILED, message=f"Build failed: {e}", error=traceback.format_exc())
 
-                # Wait for Zep to finish processing (query each episode's processed status)
-                task_manager.update_task(
-                    task_id,
-                    message="Waiting for Zep to process data...",
-                    progress=55
-                )
-
-                def wait_progress_callback(msg, progress_ratio):
-                    progress = 55 + int(progress_ratio * 35)  # 55% - 90%
-                    task_manager.update_task(
-                        task_id,
-                        message=msg,
-                        progress=progress
-                    )
-
-                builder._wait_for_episodes(episode_uuids, wait_progress_callback)
-
-                # Get graph data
-                task_manager.update_task(
-                    task_id,
-                    message="Fetching graph data...",
-                    progress=95
-                )
-                graph_data = builder.get_graph_data(graph_id)
-
-                # Update project status
-                project.status = ProjectStatus.GRAPH_COMPLETED
-                ProjectManager.save_project(project)
-
-                node_count = graph_data.get("node_count", 0)
-                edge_count = graph_data.get("edge_count", 0)
-                build_logger.info(f"[{task_id}] Graph build complete: graph_id={graph_id}, nodes={node_count}, edges={edge_count}")
-
-                # Complete
-                task_manager.update_task(
-                    task_id,
-                    status=TaskStatus.COMPLETED,
-                    message="Graph build complete",
-                    progress=100,
-                    result={
-                        "project_id": project_id,
-                        "graph_id": graph_id,
-                        "node_count": node_count,
-                        "edge_count": edge_count,
-                        "chunk_count": total_chunks
-                    }
-                )
-
-            except Exception as e:
-                # Update project status to failed
-                build_logger.error(f"[{task_id}] Graph build failed: {str(e)}")
-                build_logger.debug(traceback.format_exc())
-
-                project.status = ProjectStatus.FAILED
-                project.error = str(e)
-                ProjectManager.save_project(project)
-
-                task_manager.update_task(
-                    task_id,
-                    status=TaskStatus.FAILED,
-                    message=f"Build failed: {str(e)}",
-                    error=traceback.format_exc()
-                )
-
-        # Start background thread
-        thread = threading.Thread(target=build_task, daemon=True)
-        thread.start()
+            threading.Thread(target=build_task, daemon=True).start()
 
         return jsonify({
             "success": True,
@@ -567,12 +473,15 @@ def get_graph_data(graph_id: str):
     Get graph data (nodes and edges)
     """
     try:
-        if not Config.ZEP_API_KEY:
-            return jsonify({
-                "success": False,
-                "error": "ZEP_API_KEY is not configured. This feature requires Zep Cloud. Please set ZEP_API_KEY in your .env file.",
-                "lite_mode": Config.LITE_MODE
-            }), 503
+        if graph_id == "lite_mode":
+            return jsonify({"success": True, "data": {"graph_id": "lite_mode", "node_count": 0, "edge_count": 0, "nodes": [], "edges": []}})
+
+        if graph_id.startswith("local_"):
+            local = LocalGraphService()
+            return jsonify({"success": True, "data": local.get_graph_data_for_api(graph_id)})
+
+        if not Config.is_zep_available():
+            return jsonify({"success": False, "error": "Zep Cloud is not configured."}), 503
 
         builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)
         graph_data = builder.get_graph_data(graph_id)

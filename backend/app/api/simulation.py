@@ -212,10 +212,13 @@ def create_simulation():
 
         graph_id = data.get('graph_id') or project.graph_id
         if not graph_id:
-            return jsonify({
-                "success": False,
-                "error": "The project has not built a knowledge graph yet. Please call /api/graph/build first."
-            }), 400
+            if Config.LITE_MODE:
+                graph_id = "lite_mode"
+            else:
+                return jsonify({
+                    "success": False,
+                    "error": "The project has not built a knowledge graph yet. Please call /api/graph/build first."
+                }), 400
         
         manager = SimulationManager()
         state = manager.create_simulation(
@@ -471,23 +474,21 @@ def prepare_simulation():
         parallel_profile_count = data.get('parallel_profile_count', 5)
         
         # ========== Synchronously fetch entity count (before the background task starts) ==========
-        # This allows the frontend to immediately obtain the expected total Agent count after calling prepare
-        try:
-            logger.info(f"Synchronously fetching entity count: graph_id={state.graph_id}")
-            reader = ZepEntityReader()
-            # Quickly read entities (no edge info needed, just count)
-            filtered_preview = reader.filter_defined_entities(
-                graph_id=state.graph_id,
-                defined_entity_types=entity_types_list,
-                enrich_with_edges=False  # Skip edge info to speed things up
-            )
-            # Save entity count to state (so the frontend can retrieve it immediately)
-            state.entities_count = filtered_preview.filtered_count
-            state.entity_types = list(filtered_preview.entity_types)
-            logger.info(f"Expected entity count: {filtered_preview.filtered_count}, types: {filtered_preview.entity_types}")
-        except Exception as e:
-            logger.warning(f"Failed to synchronously fetch entity count (will retry in background task): {e}")
-            # Failure does not affect the subsequent flow; the background task will re-fetch
+        # Skip in LITE_MODE — entity count will be determined during background preparation
+        if state.graph_id != "lite_mode":
+            try:
+                logger.info(f"Synchronously fetching entity count: graph_id={state.graph_id}")
+                reader = ZepEntityReader()
+                filtered_preview = reader.filter_defined_entities(
+                    graph_id=state.graph_id,
+                    defined_entity_types=entity_types_list,
+                    enrich_with_edges=False
+                )
+                state.entities_count = filtered_preview.filtered_count
+                state.entity_types = list(filtered_preview.entity_types)
+                logger.info(f"Expected entity count: {filtered_preview.filtered_count}, types: {filtered_preview.entity_types}")
+            except Exception as e:
+                logger.warning(f"Failed to synchronously fetch entity count (will retry in background task): {e}")
         
         # Create async task
         task_manager = TaskManager()
@@ -743,7 +744,7 @@ def get_prepare_status():
         })
         
     except Exception as e:
-logger.error(f"Failed to query task status: {str(e)}")
+        logger.error(f"Failed to query task status: {str(e)}")
         return jsonify({
             "success": False,
             "error": str(e)

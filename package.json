@@ -10,7 +10,7 @@
     "backend": "cd backend && uv run python run.py",
     "frontend": "cd frontend && npm run dev",
     "build": "cd frontend && npm run build",
-    "proxy": "cd claude-proxy && python server.py",
+    "proxy": "cd claude-proxy && .venv/bin/python3 server.py",
     "backend:lite": "cd backend && LITE_MODE=true uv run python run.py",
     "dev:lite": "LITE_MODE=true concurrently --kill-others -n \"backend,frontend\" -c \"green,cyan\" \"npm run backend:lite\" \"npm run frontend\"",
     "dev:bridge": "LITE_MODE=true concurrently --kill-others -n \"proxy,backend,frontend\" -c \"yellow,green,cyan\" \"npm run proxy\" \"npm run backend:lite\" \"npm run frontend\"",

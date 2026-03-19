@@ -35,8 +35,9 @@ class Config:
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
     
-    # Zep config
+    # Zep config (optional — leave empty or as placeholder to use local graph)
     ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
+    _ZEP_PLACEHOLDER = "your_zep_api_key_here"
     
     # File upload config
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
@@ -68,18 +69,31 @@ class Config:
     
     @classmethod
     def is_zep_available(cls) -> bool:
-        """Check if Zep Cloud is available"""
-        return bool(cls.ZEP_API_KEY)
+        """True only when a real (non-placeholder) Zep API key is configured."""
+        return bool(cls.ZEP_API_KEY) and cls.ZEP_API_KEY != cls._ZEP_PLACEHOLDER
+
+    @classmethod
+    def graph_mode(cls) -> str:
+        """
+        Returns the active graph backend:
+          'zep'   — Zep Cloud (real API key configured)
+          'local' — NetworkX + SQLite (default, no Zep key)
+          'none'  — LITE_MODE=true, no graph at all
+        """
+        if cls.LITE_MODE:
+            return "none"
+        if cls.is_zep_available():
+            return "zep"
+        return "local"
 
     @classmethod
     def validate(cls):
         """Validate required configuration"""
         errors = []
-        # When using Claude Code Proxy, API key can be any value (e.g. "not-needed")
         if not cls.LLM_API_KEY:
             errors.append("LLM_API_KEY is not configured")
-        # Zep is not required in lite mode
-        if not cls.LITE_MODE and not cls.ZEP_API_KEY:
-            errors.append("ZEP_API_KEY is not configured (set LITE_MODE=true to skip)")
+        # Zep is only required when explicitly in zep mode
+        if cls.graph_mode() == "zep" and not cls.is_zep_available():
+            errors.append("ZEP_API_KEY is not configured")
         return errors
 

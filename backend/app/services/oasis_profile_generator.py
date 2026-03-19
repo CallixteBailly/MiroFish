@@ -197,12 +197,14 @@ class OasisProfileGenerator:
             base_url=self.base_url
         )
         
-        # Zep client for retrieving rich context
+        # Zep client for retrieving rich context (disabled in LITE_MODE or when graph_id is lite_mode)
         self.zep_api_key = zep_api_key or Config.ZEP_API_KEY
         self.zep_client = None
         self.graph_id = graph_id
-        
-        if self.zep_api_key:
+
+        if graph_id == "lite_mode" or (graph_id and graph_id.startswith("local_")) or Config.LITE_MODE:
+            logger.info("OasisProfileGenerator: Zep retrieval disabled (local/lite mode)")
+        elif self.zep_api_key:
             try:
                 self.zep_client = Zep(api_key=self.zep_api_key)
             except Exception as e:

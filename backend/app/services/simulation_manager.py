@@ -14,7 +14,9 @@ from enum import Enum
 
 from ..config import Config
 from ..utils.logger import get_logger
-from .zep_entity_reader import ZepEntityReader, FilteredEntities
+from .zep_entity_reader import ZepEntityReader, FilteredEntities, EntityNode
+from .lite_entity_extractor import LiteEntityExtractor
+from .local_graph import LocalGraphService
 from .oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile
 from .simulation_config_generator import SimulationConfigGenerator, SimulationParameters
 
@@ -269,19 +271,45 @@ class SimulationManager:
             sim_dir = self._get_simulation_dir(simulation_id)
 
             # ========== Stage 1: Read and filter entities ==========
-            if progress_callback:
-                progress_callback("reading", 0, "Connecting to Zep knowledge graph...")
+            if state.graph_id == "lite_mode":
+                # NONE mode: extract entities from document via LLM (no graph)
+                if progress_callback:
+                    progress_callback("reading", 0, "Extracting entities from document (Lite mode)...")
+                from ..models.project import ProjectManager
+                project = ProjectManager.get_project(state.project_id)
+                ontology = project.ontology if project else {}
+                if progress_callback:
+                    progress_callback("reading", 50, "Analyzing document with LLM...")
+                extractor = LiteEntityExtractor()
+                entities = extractor.extract_entities(document_text=document_text, ontology=ontology)
+                if defined_entity_types:
+                    entities = [e for e in entities if e.get_entity_type() in defined_entity_types]
+                entity_types_set = {e.get_entity_type() for e in entities if e.get_entity_type()}
+                filtered = FilteredEntities(entities=entities, entity_types=entity_types_set,
+                                            total_count=len(entities), filtered_count=len(entities))
 
-            reader = ZepEntityReader()
+            elif state.graph_id and state.graph_id.startswith("local_"):
+                # LOCAL mode: read from SQLite graph
+                if progress_callback:
+                    progress_callback("reading", 0, "Reading local knowledge graph...")
+                local = LocalGraphService()
+                filtered = local.get_filtered_entities(state.graph_id, defined_entity_types)
+                if progress_callback:
+                    progress_callback("reading", 100, f"{filtered.filtered_count} entities found",
+                                      current=filtered.filtered_count, total=filtered.filtered_count)
 
-            if progress_callback:
-                progress_callback("reading", 30, "Reading node data...")
-
-            filtered = reader.filter_defined_entities(
-                graph_id=state.graph_id,
-                defined_entity_types=defined_entity_types,
-                enrich_with_edges=True
-            )
+            else:
+                # ZEP mode: read from Zep Cloud
+                if progress_callback:
+                    progress_callback("reading", 0, "Connecting to Zep knowledge graph...")
+                reader = ZepEntityReader()
+                if progress_callback:
+                    progress_callback("reading", 30, "Reading node data...")
+                filtered = reader.filter_defined_entities(
+                    graph_id=state.graph_id,
+                    defined_entity_types=defined_entity_types,
+                    enrich_with_edges=True
+                )
 
             state.entities_count = filtered.filtered_count
             state.entity_types = list(filtered.entity_types)
@@ -296,7 +324,7 @@ class SimulationManager:
 
             if filtered.filtered_count == 0:
                 state.status = SimulationStatus.FAILED
-                state.error = "No entities matching the criteria were found. Please verify the knowledge graph was built correctly."
+                state.error = "No entities found. Please verify the document content and ontology."
                 self._save_simulation_state(state)
                 return state
 

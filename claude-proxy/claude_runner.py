@@ -137,7 +137,7 @@ def call_claude_cli(prompt, system_prompt=None, model=None, json_mode=False):
         cmd.extend(["--system-prompt", final_system])
 
     # Désactiver les outils MCP pour éviter les effets de bord
-    cmd.append("--no-tool")
+    cmd.extend(["--tools", ""])
 
     logger.info(f"Appel Claude CLI: model={model}, json_mode={json_mode}, prompt_len={len(prompt)}")
 

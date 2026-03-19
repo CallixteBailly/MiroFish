@@ -901,10 +901,19 @@ class ReportAgent:
         self.graph_id = graph_id
         self.simulation_id = simulation_id
         self.simulation_requirement = simulation_requirement
-        
+        self.lite_mode = (graph_id == "lite_mode")
+        self.local_mode = bool(graph_id and graph_id.startswith("local_"))
+
         self.llm = llm_client or LLMClient()
-        self.zep_tools = zep_tools or ZepToolsService()
-        
+        if self.lite_mode:
+            self.zep_tools = None
+        elif self.local_mode:
+            self.zep_tools = None  # local search handled directly
+            from .local_graph import LocalGraphService
+            self._local_graph = LocalGraphService()
+        else:
+            self.zep_tools = zep_tools or ZepToolsService()
+
         # Tool definitions
         self.tools = self._define_tools()
 
@@ -917,6 +926,35 @@ class ReportAgent:
     
     def _define_tools(self) -> Dict[str, Dict[str, Any]]:
         """Define available tools"""
+        # In lite mode (no graph), only interview_agents is available
+        if self.lite_mode:
+            return {
+                "interview_agents": {
+                    "name": "interview_agents",
+                    "description": TOOL_DESC_INTERVIEW_AGENTS,
+                    "parameters": {
+                        "interview_topic": "Interview topic or requirement description",
+                        "max_agents": "Maximum number of agents to interview (optional, default 5, max 10)"
+                    }
+                }
+            }
+        # In local mode, expose search tools backed by SQLite + interview
+        if self.local_mode:
+            return {
+                "quick_search": {
+                    "name": "quick_search",
+                    "description": TOOL_DESC_QUICK_SEARCH,
+                    "parameters": {"query": "Search query string", "limit": "Number of results (optional, default 10)"}
+                },
+                "interview_agents": {
+                    "name": "interview_agents",
+                    "description": TOOL_DESC_INTERVIEW_AGENTS,
+                    "parameters": {
+                        "interview_topic": "Interview topic or requirement description",
+                        "max_agents": "Maximum number of agents to interview (optional, default 5, max 10)"
+                    }
+                }
+            }
         return {
             "insight_forge": {
                 "name": "insight_forge",
@@ -965,7 +1003,26 @@ class ReportAgent:
             Tool execution result (text format)
         """
         logger.info(f"Executing tool: {tool_name}, parameters: {parameters}")
-        
+
+        # In lite mode, only interview_agents is available
+        if self.lite_mode and tool_name not in ("interview_agents",):
+            return f"[Tool '{tool_name}' requires Zep Cloud and is not available in Lite mode]"
+
+        # In local mode, quick_search uses SQLite
+        if self.local_mode and tool_name == "quick_search":
+            query = parameters.get("query", "")
+            limit = int(parameters.get("limit", 10))
+            results = self._local_graph.search(self.graph_id, query, limit)
+            if not results:
+                return f"No results found for: {query}"
+            lines = []
+            for r in results:
+                if r["type"] == "node":
+                    lines.append(f"[Entity] {r['name']}: {r.get('summary', '')}")
+                else:
+                    lines.append(f"[Relation] {r.get('source_name', '')} --{r.get('relation_type', '')}--> {r.get('target_name', '')}: {r.get('fact', '')}")
+            return "\n".join(lines)
+
         try:
             if tool_name == "insight_forge":
                 query = parameters.get("query", "")

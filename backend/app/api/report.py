@@ -93,10 +93,13 @@ def generate_report():
 
         graph_id = state.graph_id or project.graph_id
         if not graph_id:
-            return jsonify({
-                "success": False,
-                "error": "Missing graph ID, please ensure the graph has been built"
-            }), 400
+            if Config.LITE_MODE:
+                graph_id = "lite_mode"
+            else:
+                return jsonify({
+                    "success": False,
+                    "error": "Missing graph ID, please ensure the graph has been built"
+                }), 400
 
         simulation_requirement = project.simulation_requirement
         if not simulation_requirement:
