@@ -23,7 +23,7 @@ class Config:
     # Lite mode: no Zep Cloud required, runs via Claude Code Bridge
     LITE_MODE = os.environ.get('LITE_MODE', 'false').lower() == 'true'
 
-    # Flask配置
+    # Flask configuration
     SECRET_KEY = os.environ.get('SECRET_KEY', 'mirofish-secret-key')
     DEBUG = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
     

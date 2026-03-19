@@ -4,9 +4,7 @@
 
 <a href="https://trendshift.io/repositories/16144" target="_blank"><img src="https://trendshift.io/api/badge/repositories/16144" alt="666ghj%2FMiroFish | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
-简洁通用的群体智能引擎，预测万物
-</br>
-<em>A Simple and Universal Swarm Intelligence Engine, Predicting Anything</em>
+A Simple and Universal Swarm Intelligence Engine, Predicting Anything
 
 <a href="https://www.shanda.com/" target="_blank"><img src="./static/image/shanda_logo.png" alt="666ghj%2MiroFish | Shanda" height="40"/></a>
 
@@ -93,12 +91,49 @@ Click the image to watch MiroFish's deep prediction of the lost ending based on 
 
 ## 🚀 Quick Start
 
-### Option 1: Source Code Deployment (Recommended)
+### ⚡ Fastest Option: Claude Code Bridge Mode (No API Key Required)
+
+Run MiroFish locally using your **Claude Max subscription** — no LLM API key needed.
 
 #### Prerequisites
 
-| Tool | Version | Description | Check Installation |
-|------|---------|-------------|-------------------|
+| Tool | Version | Description | Check |
+|------|---------|-------------|-------|
+| **Node.js** | 18+ | Frontend runtime | `node -v` |
+| **Python** | ≥3.11, ≤3.12 | Backend runtime | `python --version` |
+| **uv** | Latest | Python package manager | `uv --version` |
+| **Claude Code CLI** | Latest | Routes LLM calls via Max plan | `claude --version` |
+
+Install Claude Code CLI:
+```bash
+npm install -g @anthropic-ai/claude-code
+claude login   # Authenticate with your Max account
+```
+
+#### One-Command Launch
+
+```bash
+# Guided setup + launch (recommended for first run)
+bash start.sh
+
+# Or run interactive setup first, then launch
+bash setup.sh          # Checks prerequisites, configures .env
+npm run dev:bridge     # Starts: Claude Proxy (8082) + Backend (5001) + Frontend (3000)
+```
+
+**Service URLs:**
+- Frontend: `http://localhost:3000`
+- Backend API: `http://localhost:5001`
+- Claude Proxy: `http://localhost:8082`
+
+---
+
+### Option 1: Source Code Deployment
+
+#### Prerequisites
+
+| Tool | Version | Description | Check |
+|------|---------|-------------|-------|
 | **Node.js** | 18+ | Frontend runtime, includes npm | `node -v` |
 | **Python** | ≥3.11, ≤3.12 | Backend runtime | `python --version` |
 | **uv** | Latest | Python package manager | `uv --version` |
@@ -106,75 +141,64 @@ Click the image to watch MiroFish's deep prediction of the lost ending based on 
 #### 1. Configure Environment Variables
 
 ```bash
-# Copy the example configuration file
 cp .env.example .env
-
-# Edit the .env file and fill in the required API keys
+# Edit .env and fill in your API keys
 ```
 
 **Required Environment Variables:**
 
 ```env
-# LLM API Configuration (supports any LLM API with OpenAI SDK format)
-# Recommended: Alibaba Qwen-plus model via Bailian Platform: https://bailian.console.aliyun.com/
-# High consumption, try simulations with fewer than 40 rounds first
+# LLM API Configuration (supports any OpenAI-compatible LLM API)
+# Recommended: Alibaba Qwen-plus via Bailian Platform: https://bailian.console.aliyun.com/
 LLM_API_KEY=your_api_key
 LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_MODEL_NAME=qwen-plus
 
-# Zep Cloud Configuration
-# Free monthly quota is sufficient for simple usage: https://app.getzep.com/
+# Zep Cloud Configuration (optional in Lite mode)
+# Free monthly quota sufficient for basic usage: https://app.getzep.com/
 ZEP_API_KEY=your_zep_api_key
 ```
+
+> **Lite Mode** (`LITE_MODE=true`): Set this to skip the Zep Cloud dependency. Graph building and simulation are disabled but the app starts and serves the frontend.
 
 #### 2. Install Dependencies
 
 ```bash
-# One-click installation of all dependencies (root + frontend + backend)
+# Install all dependencies (root + frontend + backend)
 npm run setup:all
-```
-
-Or install step by step:
-
-```bash
-# Install Node dependencies (root + frontend)
-npm run setup
-
-# Install Python dependencies (backend, auto-creates virtual environment)
-npm run setup:backend
 ```
 
 #### 3. Start Services
 
-```bash
-# Start both frontend and backend (run from project root)
-npm run dev
-```
+Choose your launch mode:
 
-**Service URLs:**
-- Frontend: `http://localhost:3000`
-- Backend API: `http://localhost:5001`
-
-**Start Individually:**
+| Command | Description | Requires |
+|---------|-------------|----------|
+| `npm run dev:bridge` | Claude Bridge + Lite mode **(recommended for local dev)** | Claude Code CLI |
+| `npm run dev:lite` | Lite mode with external LLM API | LLM API key |
+| `npm run dev:claude` | Claude Bridge + full mode (with Zep) | Claude Code CLI + Zep key |
+| `npm run dev` | Full mode | LLM API key + Zep key |
 
 ```bash
-npm run backend   # Start backend only
-npm run frontend  # Start frontend only
+npm run dev:bridge   # Recommended: Claude Proxy + Backend (Lite) + Frontend
+npm run dev          # Full mode: Backend + Frontend
+npm run backend      # Backend only
+npm run frontend     # Frontend only
 ```
 
 ### Option 2: Docker Deployment
 
 ```bash
-# 1. Configure environment variables (same as source deployment)
+# 1. Configure environment variables
 cp .env.example .env
 
 # 2. Pull image and start
 docker compose up -d
 ```
 
-Reads `.env` from root directory by default, maps ports `3000 (frontend) / 5001 (backend)`
+Reads `.env` from root directory by default, maps ports `3000 (frontend) / 5001 (backend)`.
 
-> Mirror address for faster pulling is provided as comments in `docker-compose.yml`, replace if needed.
+> An accelerated mirror image address is provided as a comment in `docker-compose.yml`.
 
 ## 📬 Join the Conversation
 
